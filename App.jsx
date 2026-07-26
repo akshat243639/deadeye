@@ -20,13 +20,19 @@ const Users = ({ size = 20, color = 'currentColor' }) => (
 
 const BookOpen = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 1 4 4v14a3 3 0 0 1 3-3h7z"/>
   </svg>
 );
 
 const TrendingUp = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>
+  </svg>
+);
+
+const Bot = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/>
   </svg>
 );
 
@@ -63,6 +69,12 @@ const Edit = ({ size = 20, color = 'currentColor' }) => (
 const Camera = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>
+  </svg>
+);
+
+const Send = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
   </svg>
 );
 
@@ -250,6 +262,13 @@ function AuthScreen({ onAuthed }) {
         category: role === 'shooter' ? category : null,
         team_code: finalTeamCode,
       });
+
+      if (role === 'coach') {
+        await supabase.from('coach_teams').insert([
+          { coach_id: data.user.id, team_code: finalTeamCode }
+        ]);
+      }
+
       alert('Account created successfully!');
     }
   }
@@ -332,34 +351,45 @@ function AuthScreen({ onAuthed }) {
   );
 }
 
-// --- TEAM TAB ---
-function TeamTab({ profile }) {
+// --- TEAM TAB (WITH MULTI-TEAM SWITCHING & DIRECT MESSAGING) ---
+function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTeamAdded }) {
   const [members, setMembers] = useState([]);
   const [teamName, setTeamName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [newTeamCode, setNewTeamCode] = useState('');
+  const [updating, setUpdating] = useState(false);
+
+  const [selectedShooter, setSelectedShooter] = useState(null);
+  const [shooterProgress, setShooterProgress] = useState([]);
+  const [messageText, setMessageText] = useState('');
+  const [sendingMsg, setSendingMsg] = useState(false);
+
+  const isCoach = profile?.role === 'coach';
 
   useEffect(() => {
     fetchTeamData();
-  }, [profile?.team_code]);
+  }, [activeTeamCode]);
 
   async function fetchTeamData() {
-    if (!profile?.team_code) {
+    if (!activeTeamCode) {
       setLoading(false);
       return;
     }
 
+    setLoading(true);
+
     const { data: teamData } = await supabase
       .from('teams')
       .select('name')
-      .eq('code', profile.team_code)
+      .eq('code', activeTeamCode)
       .single();
 
     if (teamData) setTeamName(teamData.name);
 
     const { data: memberData, error } = await supabase
       .from('profiles')
-      .select('display_name, email, role, category')
-      .eq('team_code', profile.team_code);
+      .select('id, display_name, email, role, category')
+      .eq('team_code', activeTeamCode);
 
     if (!error && memberData) {
       setMembers(memberData);
@@ -367,34 +397,341 @@ function TeamTab({ profile }) {
     setLoading(false);
   }
 
+  async function inspectShooter(member) {
+    if (!isCoach || member.role === 'coach') return;
+    setSelectedShooter(member);
+
+    const { data } = await supabase
+      .from('progress_logs')
+      .select('*')
+      .eq('user_id', member.id)
+      .order('created_at', { ascending: false });
+
+    if (data) setShooterProgress(data);
+  }
+
+  async function sendMessageToShooter() {
+    if (!messageText.trim() || !selectedShooter) return;
+    setSendingMsg(true);
+
+    const formattedNote = `💬 COACH DIRECT FEEDBACK:\n${messageText.trim()}`;
+
+    const { error } = await supabase.from('diary_entries').insert([
+      {
+        user_id: selectedShooter.id,
+        date: todayISO(),
+        text: formattedNote,
+      }
+    ]);
+
+    if (!error) {
+      alert(`Message sent to ${selectedShooter.display_name || selectedShooter.email}'s diary!`);
+      setMessageText('');
+    } else {
+      alert('Error sending message: ' + error.message);
+    }
+    setSendingMsg(false);
+  }
+
+  async function joinAdditionalTeam() {
+    if (!newTeamCode.trim()) return alert('Please enter a team code');
+    setUpdating(true);
+
+    const cleanCode = newTeamCode.trim().toUpperCase();
+
+    if (isCoach) {
+      const { error } = await supabase.from('coach_teams').insert([
+        { coach_id: profile.id, team_code: cleanCode }
+      ]);
+
+      if (!error) {
+        alert(`Successfully joined team ${cleanCode}!`);
+        setNewTeamCode('');
+        if (onTeamAdded) onTeamAdded(cleanCode);
+      } else {
+        alert('Error adding team: ' + error.message);
+      }
+    } else {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ team_code: cleanCode })
+        .eq('id', profile.id);
+
+      if (!error) window.location.reload();
+      else alert('Error joining team: ' + error.message);
+    }
+    setUpdating(false);
+  }
+
+  async function leaveCurrentTeam() {
+    if (!confirm('Are you sure you want to remove/leave this team?')) return;
+    setUpdating(true);
+
+    if (isCoach) {
+      await supabase
+        .from('coach_teams')
+        .delete()
+        .eq('coach_id', profile.id)
+        .eq('team_code', activeTeamCode);
+
+      window.location.reload();
+    } else {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ team_code: null })
+        .eq('id', profile.id);
+
+      if (!error) window.location.reload();
+      else alert('Error leaving team: ' + error.message);
+    }
+    setUpdating(false);
+  }
+
   if (loading) return <Card><p style={{ color: COLORS.textMuted }}>Loading team workspace...</p></Card>;
 
   return (
     <div>
-      <Card>
-        <h2 className="font-display" style={{ marginTop: 0 }}>
-          {teamName || 'Team Workspace'}
-        </h2>
-        <p style={{ color: COLORS.textMuted, marginTop: 0 }}>
-          Team Code: <span style={{ color: COLORS.brass, fontWeight: 'bold' }}>{profile?.team_code || 'No Team'}</span>
-        </p>
-      </Card>
+      {/* COACH MULTI-TEAM SWITCHER HEADER */}
+      {isCoach && coachTeams.length > 0 && (
+        <Card>
+          <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>
+            Switch Active Team Workspace:
+          </label>
+          <select
+            value={activeTeamCode}
+            onChange={(e) => onSelectTeam(e.target.value)}
+            style={{
+              width: '100%',
+              padding: 10,
+              background: COLORS.surfaceAlt,
+              color: COLORS.brass,
+              fontWeight: 'bold',
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 4,
+              boxSizing: 'border-box',
+            }}
+          >
+            {coachTeams.map((code) => (
+              <option key={code} value={code}>Team Code: {code}</option>
+            ))}
+          </select>
+        </Card>
+      )}
 
       <Card>
-        <h3 className="font-display" style={{ marginTop: 0 }}>Roster ({members.length})</h3>
-        {members.map((member, idx) => (
-          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: 12, background: COLORS.surfaceAlt, borderRadius: 6, marginBottom: 8 }}>
-            <div>
-              <div><strong>{member.display_name || member.email}</strong></div>
-              <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>
-                {member.email} {member.category ? `• ${member.category}` : ''}
-              </div>
-            </div>
-            <span style={{ color: COLORS.brass, textTransform: 'capitalize' }}>{member.role || 'Member'}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h2 className="font-display" style={{ margin: 0 }}>
+              {teamName || 'Team Workspace'}
+            </h2>
+            <p style={{ color: COLORS.textMuted, margin: '4px 0 0 0' }}>
+              Team Code: <span style={{ color: COLORS.brass, fontWeight: 'bold' }}>{activeTeamCode || 'None'}</span>
+            </p>
           </div>
-        ))}
+          {activeTeamCode && (
+            <Button variant="ghost" onClick={leaveCurrentTeam} disabled={updating}>
+              Leave Team
+            </Button>
+          )}
+        </div>
       </Card>
+
+      {/* ADD / JOIN ANOTHER TEAM FORM */}
+      <Card>
+        <h4 className="font-display" style={{ marginTop: 0, marginBottom: 8 }}>
+          {isCoach ? '➕ Add Another Team to Your Coach Workspace' : 'Join a Team Workspace'}
+        </h4>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="text"
+            placeholder="Enter Team Code (e.g. X7K9P)"
+            value={newTeamCode}
+            onChange={(e) => setNewTeamCode(e.target.value)}
+            style={{
+              flex: 1,
+              padding: 10,
+              background: COLORS.surfaceAlt,
+              color: COLORS.text,
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 4,
+            }}
+          />
+          <Button onClick={joinAdditionalTeam} disabled={updating}>
+            {updating ? <Loader2 size={16} /> : 'Add Team'}
+          </Button>
+        </div>
+      </Card>
+
+      {/* ROSTER */}
+      {activeTeamCode && (
+        <Card>
+          <h3 className="font-display" style={{ marginTop: 0 }}>Roster ({members.length})</h3>
+          {isCoach && (
+            <p style={{ color: COLORS.textMuted, fontSize: 12, marginTop: -8, marginBottom: 12 }}>
+              💡 Tap on any shooter's name to view their recent progress and send a personal feedback message.
+            </p>
+          )}
+
+          {members.map((member, idx) => (
+            <div 
+              key={idx} 
+              onClick={() => inspectShooter(member)}
+              style={{ 
+                display: 'flex', 
+                justify: 'space-between', 
+                padding: 12, 
+                background: COLORS.surfaceAlt, 
+                borderRadius: 6, 
+                marginBottom: 8,
+                cursor: isCoach && member.role !== 'coach' ? 'pointer' : 'default',
+                border: selectedShooter?.id === member.id ? `1px solid ${COLORS.brass}` : '1px solid transparent'
+              }}
+            >
+              <div>
+                <div>
+                  <strong>{member.display_name || member.email}</strong>
+                  {isCoach && member.role !== 'coach' && (
+                    <span style={{ fontSize: 11, color: COLORS.brass, marginLeft: 8 }}>[Tap to Inspect]</span>
+                  )}
+                </div>
+                <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>
+                  {member.email} {member.category ? `• ${member.category}` : ''}
+                </div>
+              </div>
+              <span style={{ color: COLORS.brass, textTransform: 'capitalize' }}>{member.role || 'Member'}</span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {/* INSPECT SHOOTER MODAL / CARD */}
+      {selectedShooter && (
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 className="font-display" style={{ margin: 0, color: COLORS.brass }}>
+              {selectedShooter.display_name || selectedShooter.email}'s Profile
+            </h3>
+            <Button variant="ghost" onClick={() => setSelectedShooter(null)}>Close</Button>
+          </div>
+
+          <div style={{ background: COLORS.surfaceAlt, padding: 12, borderRadius: 6, marginBottom: 16 }}>
+            <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>
+              Send Personal Feedback / Message to {selectedShooter.display_name || 'Shooter'}
+            </label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input 
+                type="text" 
+                value={messageText} 
+                onChange={(e) => setMessageText(e.target.value)} 
+                placeholder="Write feedback note..."
+                style={{
+                  flex: 1,
+                  padding: 10,
+                  background: COLORS.bg,
+                  color: COLORS.text,
+                  border: `1px solid ${COLORS.border}`,
+                  borderRadius: 4,
+                }}
+              />
+              <Button onClick={sendMessageToShooter} disabled={sendingMsg}>
+                {sendingMsg ? <Loader2 size={16} /> : <Send size={16} />}
+              </Button>
+            </div>
+          </div>
+
+          <h4 className="font-display" style={{ marginTop: 0, marginBottom: 10 }}>Recent Target Scores</h4>
+          {shooterProgress.length === 0 ? (
+            <p style={{ color: COLORS.textMuted, fontSize: 13 }}>No target scores submitted yet.</p>
+          ) : (
+            shooterProgress.map((item) => (
+              <div key={item.id} style={{ padding: 10, background: COLORS.bg, borderRadius: 6, marginBottom: 8, border: `1px solid ${COLORS.border}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: COLORS.textMuted, fontSize: 12 }}>{item.date} • {item.discipline}</span>
+                  <strong style={{ color: COLORS.brass, fontSize: 18 }}>{item.score}</strong>
+                </div>
+                {item.notes && <p style={{ margin: '4px 0 0 0', fontSize: 13 }}>{item.notes}</p>}
+                {item.photo_url && (
+                  <img 
+                    src={item.photo_url} 
+                    alt="Target Sheet" 
+                    style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: 4, marginTop: 8 }}
+                  />
+                )}
+              </div>
+            ))
+          )}
+        </Card>
+      )}
     </div>
+  );
+}
+
+// --- FREE GEMINI AI COACH TAB ---
+function AICoachTab({ profile, user }) {
+  const [query, setQuery] = useState('');
+  const [response, setResponse] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function askAICoach() {
+    if (!query.trim()) return;
+    setLoading(true);
+
+    const { data: recentScores } = await supabase
+      .from('progress_logs')
+      .select('score, discipline, date, notes')
+      .eq('user_id', user.id)
+      .limit(5);
+
+    const { data, error } = await supabase.functions.invoke('ai-coach', {
+      body: {
+        prompt: query,
+        scores: recentScores || [],
+        category: profile?.category || '10m Air Pistol'
+      }
+    });
+
+    if (data?.reply) setResponse(data.reply);
+    else if (error) setResponse('Error: Could not connect to AI Coach.');
+    
+    setLoading(false);
+  }
+
+  return (
+    <Card>
+      <h2 className="font-display" style={{ marginTop: 0 }}>🎯 AI Performance Coach</h2>
+      <p style={{ color: COLORS.textMuted, fontSize: 13 }}>
+        Ask for technical advice, sight adjustments, or dry-fire drills customized to your recent scores.
+      </p>
+
+      <textarea
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        rows={3}
+        placeholder="e.g., Analyze my recent scores and suggest a trigger control drill for low shots..."
+        style={{
+          width: '100%',
+          padding: 10,
+          background: COLORS.surfaceAlt,
+          color: COLORS.text,
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 6,
+          boxSizing: 'border-box'
+        }}
+      />
+
+      <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button onClick={askAICoach} disabled={loading}>
+          {loading ? <Loader2 size={16} /> : 'Ask AI Coach'}
+        </Button>
+      </div>
+
+      {response && (
+        <div style={{ marginTop: 16, padding: 12, background: COLORS.bg, borderLeft: `3px solid ${COLORS.brass}`, borderRadius: 4 }}>
+          <strong style={{ color: COLORS.brass, display: 'block', marginBottom: 6 }}>Coach Analysis:</strong>
+          <p style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 14 }}>{response}</p>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -462,7 +799,9 @@ function DiaryTab({ user }) {
       {entries.map((entry) => (
         <Card key={entry.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-            <strong style={{ color: COLORS.brass }}>{entry.date}</strong>
+            <strong style={{ color: entry.text.startsWith('💬 COACH') ? COLORS.olive : COLORS.brass }}>
+              {entry.date} {entry.text.startsWith('💬 COACH') ? '• Coach Note' : ''}
+            </strong>
             <Button variant="ghost" onClick={() => deleteEntry(entry.id)}><Trash2 size={15} /></Button>
           </div>
           <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{entry.text}</p>
@@ -473,60 +812,118 @@ function DiaryTab({ user }) {
 }
 
 // --- ANNOUNCEMENT TAB ---
-function AnnouncementTab({ profile, user }) {
+function AnnouncementTab({ profile, activeTeamCode, user }) {
   const [announcements, setAnnouncements] = useState([]);
   const [message, setMessage] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
+  const isCoach = profile?.role === 'coach';
 
   useEffect(() => {
     fetchAnnouncements();
-  }, [profile?.team_code]);
+  }, [activeTeamCode]);
 
   async function fetchAnnouncements() {
+    if (!activeTeamCode) return;
+
     const { data } = await supabase
       .from('announcements')
       .select('*')
-      .eq('team_code', profile?.team_code)
+      .eq('team_code', activeTeamCode)
       .order('created_at', { ascending: false });
 
     if (data) setAnnouncements(data);
   }
 
   async function addAnnouncement() {
-    if (!message.trim()) return;
+    if (!message.trim() && !imageFile) return;
+    setUploading(true);
+
+    let uploadedPhotoUrl = null;
+
+    if (imageFile) {
+      const fileExt = imageFile.name.split('.').pop();
+      const fileName = `announcement_${user.id}_${Date.now()}.${fileExt}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('targets')
+        .upload(fileName, imageFile);
+
+      if (!uploadErr) {
+        const { data: publicUrlData } = supabase.storage
+          .from('targets')
+          .getPublicUrl(fileName);
+        uploadedPhotoUrl = publicUrlData.publicUrl;
+      }
+    }
+
     const { data, error } = await supabase.from('announcements').insert([
-      { team_code: profile?.team_code, author_email: user.email, text: message.trim(), date: todayISO() }
+      { 
+        team_code: activeTeamCode, 
+        author_email: user.email, 
+        text: message.trim(), 
+        photo_url: uploadedPhotoUrl,
+        date: todayISO() 
+      }
     ]).select();
 
     if (!error && data) {
       setAnnouncements([data[0], ...announcements]);
       setMessage('');
+      setImageFile(null);
     }
+    setUploading(false);
   }
 
   return (
     <div>
-      <Card>
-        <h2 className="font-display" style={{ marginTop: 0 }}>Team Announcements</h2>
-        <textarea
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          rows={4}
-          placeholder="Broadcast a message to your team..."
-          style={{
-            width: '100%',
-            padding: 12,
-            resize: 'vertical',
-            background: COLORS.surfaceAlt,
-            color: COLORS.text,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: 6,
-            boxSizing: 'border-box',
-          }}
-        />
-        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
-          <Button onClick={addAnnouncement}>Send Broadcast</Button>
-        </div>
-      </Card>
+      {isCoach && (
+        <Card>
+          <h2 className="font-display" style={{ marginTop: 0 }}>Team Announcements ({activeTeamCode})</h2>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={4}
+            placeholder="Broadcast a message or schedule to your team..."
+            style={{
+              width: '100%',
+              padding: 12,
+              resize: 'vertical',
+              background: COLORS.surfaceAlt,
+              color: COLORS.text,
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 6,
+              boxSizing: 'border-box',
+            }}
+          />
+
+          <div style={{ marginTop: 12, marginBottom: 12 }}>
+            <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>
+              Attach Announcement Image (Diagram, Training Schedule, etc.)
+            </label>
+            <input 
+              type="file" 
+              accept="image/*" 
+              onChange={(e) => setImageFile(e.target.files[0])}
+              style={{
+                width: '100%',
+                padding: 10,
+                background: COLORS.surfaceAlt,
+                color: COLORS.text,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 4,
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button onClick={addAnnouncement} disabled={uploading}>
+              {uploading ? <Loader2 size={16} /> : 'Send Broadcast'}
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {announcements.map((item) => (
         <Card key={item.id}>
@@ -534,15 +931,25 @@ function AnnouncementTab({ profile, user }) {
             <strong style={{ color: COLORS.brass }}>{item.date}</strong>
             <span className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>{item.author_email}</span>
           </div>
-          <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{item.text}</p>
+          {item.text && <p style={{ margin: '0 0 10px 0', whiteSpace: 'pre-wrap' }}>{item.text}</p>}
+
+          {item.photo_url && (
+            <div style={{ marginTop: 10, borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
+              <img 
+                src={item.photo_url} 
+                alt="Announcement Attachment" 
+                style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: 6, border: `1px solid ${COLORS.border}` }}
+              />
+            </div>
+          )}
         </Card>
       ))}
     </div>
   );
 }
 
-// --- PROGRESS TAB (WITH NATIVE FILE UPLOADER) ---
-function ProgressTab({ profile, user }) {
+// --- PROGRESS TAB ---
+function ProgressTab({ profile, activeTeamCode, user }) {
   const [entries, setEntries] = useState([]);
   const [discipline, setDiscipline] = useState(profile?.category || DISCIPLINES[0]);
   const [score, setScore] = useState('');
@@ -554,14 +961,14 @@ function ProgressTab({ profile, user }) {
 
   useEffect(() => {
     fetchSessions();
-  }, [user?.id, profile?.team_code]);
+  }, [user?.id, activeTeamCode]);
 
   async function fetchSessions() {
     if (isCoach) {
       const { data } = await supabase
         .from('progress_logs')
         .select('*')
-        .eq('team_code', profile?.team_code)
+        .eq('team_code', activeTeamCode)
         .order('created_at', { ascending: false });
 
       if (data) setEntries(data);
@@ -583,7 +990,6 @@ function ProgressTab({ profile, user }) {
     setUploading(true);
     let uploadedPhotoUrl = null;
 
-    // Direct Image Upload to Supabase Storage Bucket
     if (imageFile) {
       const fileExt = imageFile.name.split('.').pop();
       const fileName = `${user.id}_${Date.now()}.${fileExt}`;
@@ -602,7 +1008,7 @@ function ProgressTab({ profile, user }) {
     const { data, error } = await supabase.from('progress_logs').insert([
       {
         user_id: user.id,
-        team_code: profile?.team_code,
+        team_code: activeTeamCode,
         discipline: discipline,
         score: value,
         notes: notes.trim(),
@@ -655,7 +1061,6 @@ function ProgressTab({ profile, user }) {
           <Input label="Score" value={score} type="number" onChange={(e) => setScore(e.target.value)} />
           <Input label="Notes / Sight Adjustments" value={notes} onChange={(e) => setNotes(e.target.value)} />
           
-          {/* NATIVE FILE SELECTOR / CAMERA BUTTON */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>
               Target Sheet Photo (Upload / Take Picture)
@@ -686,8 +1091,8 @@ function ProgressTab({ profile, user }) {
 
       {isCoach && (
         <Card>
-          <h2 className="font-display" style={{ marginTop: 0 }}>Team Progress Feed</h2>
-          <p style={{ color: COLORS.textMuted, margin: 0, fontSize: 13 }}>Viewing live target sheets and scores from your entire team.</p>
+          <h2 className="font-display" style={{ marginTop: 0 }}>Team Feed ({activeTeamCode})</h2>
+          <p style={{ color: COLORS.textMuted, margin: 0, fontSize: 13 }}>Viewing live target sheets and scores from team {activeTeamCode}.</p>
         </Card>
       )}
 
@@ -712,7 +1117,6 @@ function ProgressTab({ profile, user }) {
             </div>
           </div>
 
-          {/* TARGET PHOTO DISPLAY */}
           {item.photo_url && (
             <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
               <p style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -734,7 +1138,58 @@ function ProgressTab({ profile, user }) {
 // --- DASHBOARD ---
 function Dashboard({ user, profile, onLogout }) {
   const [tab, setTab] = useState('team');
+  const [coachTeams, setCoachTeams] = useState([]);
+  const [activeTeamCode, setActiveTeamCode] = useState(profile?.team_code || '');
+
   const isCoach = profile?.role === 'coach';
+
+  useEffect(() => {
+    if (isCoach) {
+      fetchCoachTeams();
+    } else {
+      setActiveTeamCode(profile?.team_code || '');
+      if (window.OneSignalDeferred && profile?.team_code) {
+        window.OneSignalDeferred.push(async function(OneSignal) {
+          await OneSignal.login(user.id);
+          await OneSignal.User.addTags({
+            team_code: profile.team_code,
+            role: 'shooter'
+          });
+        });
+      }
+    }
+  }, [profile?.id, isCoach]);
+
+  async function fetchCoachTeams() {
+    const { data } = await supabase
+      .from('coach_teams')
+      .select('team_code')
+      .eq('coach_id', profile.id);
+
+    let teamsList = [];
+    if (data && data.length > 0) {
+      teamsList = data.map((t) => t.team_code);
+    } else if (profile?.team_code) {
+      teamsList = [profile.team_code];
+    }
+
+    setCoachTeams(teamsList);
+    if (teamsList.length > 0 && !teamsList.includes(activeTeamCode)) {
+      setActiveTeamCode(teamsList[0]);
+    }
+
+    // Tag all coach team codes in OneSignal
+    if (window.OneSignalDeferred) {
+      window.OneSignalDeferred.push(async function(OneSignal) {
+        await OneSignal.login(user.id);
+        const tags = { role: 'coach' };
+        teamsList.forEach((code, i) => {
+          tags[`team_code_${i + 1}`] = code;
+        });
+        await OneSignal.User.addTags(tags);
+      });
+    }
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: COLORS.bg, color: COLORS.text }}>
@@ -744,14 +1199,17 @@ function Dashboard({ user, profile, onLogout }) {
           <Crosshair color={COLORS.red} />
           <h2 className="font-display" style={{ margin: 0 }}>DEADEYE</h2>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div>
             <div style={{ fontWeight: 'bold' }}>{profile?.display_name || user.email}</div>
-            {profile?.category && (
-              <div className="font-mono" style={{ fontSize: 11, color: COLORS.textMuted, textAlign: 'right' }}>{profile.category}</div>
-            )}
+            <div className="font-mono" style={{ fontSize: 11, color: COLORS.brass, textAlign: 'right', textTransform: 'capitalize' }}>
+              {profile?.role || 'Shooter'} {profile?.category ? `• ${profile.category}` : ''}
+            </div>
           </div>
-          <Button variant="ghost" onClick={onLogout}><LogOut size={16} /></Button>
+
+          <Button variant="ghost" onClick={onLogout} ariaLabel="Logout">
+            <LogOut size={16} />
+          </Button>
         </div>
       </header>
 
@@ -761,17 +1219,22 @@ function Dashboard({ user, profile, onLogout }) {
           <div>Team</div>
         </button>
 
-        {isCoach ? (
-          <button onClick={() => setTab('announce')} style={{ flex: 1, padding: 15, cursor: 'pointer', border: 'none', background: tab === 'announce' ? COLORS.surfaceAlt : 'transparent', color: tab === 'announce' ? COLORS.text : COLORS.textMuted }}>
-            <Edit size={18} style={{ marginBottom: 4 }} />
-            <div>Announce</div>
-          </button>
-        ) : (
+        <button onClick={() => setTab('announce')} style={{ flex: 1, padding: 15, cursor: 'pointer', border: 'none', background: tab === 'announce' ? COLORS.surfaceAlt : 'transparent', color: tab === 'announce' ? COLORS.text : COLORS.textMuted }}>
+          <Edit size={18} style={{ marginBottom: 4 }} />
+          <div>Announce</div>
+        </button>
+
+        {!isCoach && (
           <button onClick={() => setTab('diary')} style={{ flex: 1, padding: 15, cursor: 'pointer', border: 'none', background: tab === 'diary' ? COLORS.surfaceAlt : 'transparent', color: tab === 'diary' ? COLORS.text : COLORS.textMuted }}>
             <BookOpen size={18} style={{ marginBottom: 4 }} />
             <div>Diary</div>
           </button>
         )}
+
+        <button onClick={() => setTab('ai')} style={{ flex: 1, padding: 15, cursor: 'pointer', border: 'none', background: tab === 'ai' ? COLORS.surfaceAlt : 'transparent', color: tab === 'ai' ? COLORS.text : COLORS.textMuted }}>
+          <Bot size={18} style={{ marginBottom: 4 }} />
+          <div>AI Coach</div>
+        </button>
 
         <button onClick={() => setTab('progress')} style={{ flex: 1, padding: 15, cursor: 'pointer', border: 'none', background: tab === 'progress' ? COLORS.surfaceAlt : 'transparent', color: tab === 'progress' ? COLORS.text : COLORS.textMuted }}>
           <TrendingUp size={18} style={{ marginBottom: 4 }} />
@@ -780,10 +1243,19 @@ function Dashboard({ user, profile, onLogout }) {
       </nav>
 
       <main style={{ padding: 20, maxWidth: 900, margin: 'auto' }}>
-        {tab === 'team' && <TeamTab profile={profile} />}
+        {tab === 'team' && (
+          <TeamTab 
+            profile={profile} 
+            activeTeamCode={activeTeamCode} 
+            coachTeams={coachTeams}
+            onSelectTeam={(code) => setActiveTeamCode(code)}
+            onTeamAdded={(code) => fetchCoachTeams()}
+          />
+        )}
+        {tab === 'announce' && <AnnouncementTab profile={profile} activeTeamCode={activeTeamCode} user={user} />}
         {tab === 'diary' && !isCoach && <DiaryTab user={user} />}
-        {tab === 'announce' && isCoach && <AnnouncementTab profile={profile} user={user} />}
-        {tab === 'progress' && <ProgressTab profile={profile} user={user} />}
+        {tab === 'ai' && <AICoachTab profile={profile} user={user} />}
+        {tab === 'progress' && <ProgressTab profile={profile} activeTeamCode={activeTeamCode} user={user} />}
       </main>
     </div>
   );
@@ -864,7 +1336,13 @@ function AppInner() {
     return <AuthScreen onAuthed={setUser} />;
   }
 
-  return <Dashboard user={user} profile={profile} onLogout={handleLogout} />;
+  return (
+    <Dashboard 
+      user={user} 
+      profile={profile} 
+      onLogout={handleLogout} 
+    />
+  );
 }
 
 export default function App() {

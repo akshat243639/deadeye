@@ -1,4 +1,11 @@
 import React, { useState, useEffect, Component } from 'react';
+
+// Initialize Supabase using Vercel Environment Variables and CDN script
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = window.supabase?.createClient(supabaseUrl, supabaseKey);
+
+// --- SVG ICONS ---
 const Crosshair = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>
@@ -65,6 +72,7 @@ const X = ({ size = 20, color = 'currentColor' }) => (
   </svg>
 );
 
+// --- THEME & CONSTANTS ---
 export const COLORS = {
   bg: '#1B1A17',
   surface: '#24211D',
@@ -85,18 +93,6 @@ body { margin: 0; padding: 0; background: ${COLORS.bg}; color: ${COLORS.text}; f
 
 export const DISCIPLINES = ['10m Air Rifle', '10m Air Pistol', '25m Sport Pistol', '50m Rifle 3 Positions', 'Trap', 'Skeet'];
 
-const STORAGE_KEYS = {
-  USERS: 'deadeye_users',
-  TEAMS: 'deadeye_teams',
-  SESSION: 'deadeye_session',
-};
-
-const MASTER_PASSWORD = 'adminpass';
-
-export function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
-}
-
 export function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -108,45 +104,7 @@ export function generateTeamCode() {
   return code;
 }
 
-export function load(key, fallback) {
-  try {
-    if (typeof localStorage === 'undefined') return fallback;
-    const value = localStorage.getItem(key);
-    return value ? JSON.parse(value) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-export function save(key, value) {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
-}
-
-export function remove(key) {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.removeItem(key);
-  } catch {}
-}
-
-export function ensureDemoData() {
-  const users = load(STORAGE_KEYS.USERS, {});
-  const teams = load(STORAGE_KEYS.TEAMS, {});
-  if (Object.keys(users).length || Object.keys(teams).length) return;
-
-  const teamCode = 'DEMO1';
-  save(STORAGE_KEYS.USERS, {
-    coach1: { displayName: 'Coach Elena', password: 'demo123', role: 'coach', teamCode },
-    shooter1: { displayName: 'Arjun Patel', password: 'demo123', role: 'shooter', teamCode },
-  });
-  save(STORAGE_KEYS.TEAMS, {
-    [teamCode]: { name: 'Deadeye Demo Team', coach: 'coach1', members: ['coach1', 'shooter1'] },
-  });
-}
-
+// --- UI COMPONENTS ---
 function Button({ children, onClick, type = 'button', variant = 'primary', disabled = false, ariaLabel }) {
   const styles = {
     primary: { background: COLORS.red, color: '#fff', border: 'none' },
@@ -213,58 +171,82 @@ function Reticle({ size = 100 }) {
   );
 }
 
-function AuthScreen({ users, teams, onAuthed, setUsers, setTeams }) {
+// --- AUTH SCREEN (SUPABASE AUTH INTEGRATED) ---
+function AuthScreen({ onAuthed }) {
   const [mode, setMode] = useState('login');
   const [displayName, setDisplayName] = useState('');
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('shooter');
   const [teamMode, setTeamMode] = useState('join');
   const [teamName, setTeamName] = useState('');
   const [teamCode, setTeamCode] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  function login(e) {
+  async function login(e) {
     e.preventDefault();
-    const uname = username.trim().toLowerCase();
-    const user = users[uname];
-    if (!user) return setError('User not found');
-    if (password !== user.password && password !== MASTER_PASSWORD) return setError('Wrong password');
-    const sessionUser = { username: uname, ...user };
-    save(STORAGE_KEYS.SESSION, sessionUser);
-    onAuthed(sessionUser);
+    if (!email || !password) return setError('Please enter your email and password');
+    setLoading(true);
+    setError('');
+
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (authError) {
+      setError(authError.message);
+      setLoading(false);
+    }
   }
 
-  function signup(e) {
+  async function signup(e) {
     e.preventDefault();
-    const uname = username.trim().toLowerCase();
-    if (!uname || !password || !displayName) return setError('Fill all required fields');
-    if (users[uname]) return setError('Username already exists');
+    if (!email || !password || !displayName) return setError('Fill all required fields');
+    setLoading(true);
+    setError('');
 
-    const updatedTeams = { ...teams };
-    let finalCode = '';
+    let finalTeamCode = teamCode.trim().toUpperCase();
 
     if (teamMode === 'create') {
-      if (!teamName.trim()) return setError('Please provide a team name');
-      finalCode = generateTeamCode();
-      while (updatedTeams[finalCode]) finalCode = generateTeamCode();
-      updatedTeams[finalCode] = { name: teamName.trim(), coach: role === 'coach' ? uname : null, members: [uname] };
-    } else {
-      finalCode = teamCode.trim().toUpperCase();
-      if (!updatedTeams[finalCode]) return setError('Invalid team code');
-      if (!updatedTeams[finalCode].members.includes(uname)) updatedTeams[finalCode].members.push(uname);
-      if (role === 'coach') updatedTeams[finalCode].coach = uname;
+      if (!teamName.trim()) {
+        setLoading(false);
+        return setError('Please provide a team name');
+      }
+      finalTeamCode = generateTeamCode();
+      const { error: teamErr } = await supabase.from('teams').insert([
+        { code: finalTeamCode, name: teamName.trim() }
+      ]);
+      if (teamErr) console.log('Team creation notice:', teamErr.message);
     }
 
-    const updatedUsers = { ...users, [uname]: { displayName, password, role, teamCode: finalCode } };
-    save(STORAGE_KEYS.USERS, updatedUsers);
-    save(STORAGE_KEYS.TEAMS, updatedTeams);
-    setUsers(updatedUsers);
-    setTeams(updatedTeams);
+    const { data, error: authError } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: {
+          display_name: displayName,
+          role: role,
+          team_code: finalTeamCode,
+        }
+      }
+    });
 
-    const sessionUser = { username: uname, ...updatedUsers[uname] };
-    save(STORAGE_KEYS.SESSION, sessionUser);
-    onAuthed(sessionUser);
+    if (authError) {
+      setError(authError.message);
+      setLoading(false);
+    } else if (data?.user) {
+      // Upsert profile in Supabase table
+      await supabase.from('profiles').upsert({
+        id: data.user.id,
+        email: email.trim(),
+        display_name: displayName,
+        role: role,
+        team_code: finalTeamCode,
+      });
+      alert('Account created successfully!');
+    }
   }
 
   return (
@@ -275,6 +257,7 @@ function AuthScreen({ users, teams, onAuthed, setUsers, setTeams }) {
           <div style={{ textAlign: 'center', marginBottom: 16 }}>
             <Reticle size={64} />
             <h1 className="font-display" style={{ marginBottom: 4 }}>DEADEYE</h1>
+            <p style={{ color: COLORS.textMuted, fontSize: 13, margin: 0 }}>Cloud Target Shooting Platform</p>
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
@@ -284,15 +267,15 @@ function AuthScreen({ users, teams, onAuthed, setUsers, setTeams }) {
 
           {mode === 'login' ? (
             <form onSubmit={login}>
-              <Input label="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
+              <Input label="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-              {error && <p style={{ color: COLORS.red }}>{error}</p>}
-              <Button type="submit">Login</Button>
+              {error && <p style={{ color: COLORS.red, fontSize: 14 }}>{error}</p>}
+              <Button type="submit" disabled={loading}>{loading ? <Loader2 size={16} /> : 'Login'}</Button>
             </form>
           ) : (
             <form onSubmit={signup}>
               <Input label="Display Name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-              <Input label="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
+              <Input label="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <Input label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
 
               <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
@@ -311,8 +294,8 @@ function AuthScreen({ users, teams, onAuthed, setUsers, setTeams }) {
                 <Input label="Team Code" value={teamCode} onChange={(e) => setTeamCode(e.target.value)} />
               )}
 
-              {error && <p style={{ color: COLORS.red }}>{error}</p>}
-              <Button type="submit">Create Account</Button>
+              {error && <p style={{ color: COLORS.red, fontSize: 14 }}>{error}</p>}
+              <Button type="submit" disabled={loading}>{loading ? <Loader2 size={16} /> : 'Create Account'}</Button>
             </form>
           )}
         </Card>
@@ -321,77 +304,92 @@ function AuthScreen({ users, teams, onAuthed, setUsers, setTeams }) {
   );
 }
 
-function TeamTab({ team, users, teamCode }) {
-  if (!team) {
-    return <Card><p style={{ color: COLORS.textMuted }}>You are not currently part of a team.</p></Card>;
+// --- TEAM TAB (SUPABASE CLOUD SYNCED) ---
+function TeamTab({ profile }) {
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchMembers();
+  }, [profile?.team_code]);
+
+  async function fetchMembers() {
+    if (!profile?.team_code) {
+      setLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('display_name, email, role')
+      .eq('team_code', profile.team_code);
+
+    if (!error && data) {
+      setMembers(data);
+    }
+    setLoading(false);
   }
+
+  if (loading) return <Card><p style={{ color: COLORS.textMuted }}>Loading team roster...</p></Card>;
 
   return (
     <div>
       <Card>
-        <h2 className="font-display" style={{ marginTop: 0 }}>{team.name}</h2>
-        <p style={{ color: COLORS.textMuted, marginTop: 0 }}>Team Code: <span style={{ color: COLORS.brass }}>{teamCode}</span></p>
+        <h2 className="font-display" style={{ marginTop: 0 }}>Team Workspace</h2>
+        <p style={{ color: COLORS.textMuted, marginTop: 0 }}>Team Code: <span style={{ color: COLORS.brass, fontWeight: 'bold' }}>{profile?.team_code || 'No Team'}</span></p>
       </Card>
 
       <Card>
-        <h3 className="font-display" style={{ marginTop: 0 }}>Members</h3>
-        {team.members.map((uname) => {
-          const member = users[uname];
-          return (
-            <div key={uname} style={{ display: 'flex', justifyContent: 'space-between', padding: 12, background: COLORS.surfaceAlt, borderRadius: 6, marginBottom: 8 }}>
-              <div>
-                <div>{member?.displayName || uname}</div>
-                <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>@{uname}</div>
-              </div>
-              <span style={{ color: COLORS.brass }}>{uname === team.coach ? 'Coach' : 'Shooter'}</span>
+        <h3 className="font-display" style={{ marginTop: 0 }}>Roster ({members.length})</h3>
+        {members.map((member, idx) => (
+          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: 12, background: COLORS.surfaceAlt, borderRadius: 6, marginBottom: 8 }}>
+            <div>
+              <div><strong>{member.display_name || member.email}</strong></div>
+              <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>{member.email}</div>
             </div>
-          );
-        })}
+            <span style={{ color: COLORS.brass, textTransform: 'capitalize' }}>{member.role || 'Member'}</span>
+          </div>
+        ))}
       </Card>
     </div>
   );
 }
 
-function DiaryTab({ username }) {
-  const STORAGE_KEY = `deadeye_diary_${username}`;
+// --- DIARY TAB ---
+function DiaryTab({ user }) {
   const [entries, setEntries] = useState([]);
   const [text, setText] = useState('');
   const [editing, setEditing] = useState(null);
 
   useEffect(() => {
-    setEntries(load(STORAGE_KEY, []));
-  }, [username]);
+    fetchEntries();
+  }, [user?.id]);
 
-  function saveEntries(list) {
-    setEntries(list);
-    save(STORAGE_KEY, list);
+  async function fetchEntries() {
+    const { data } = await supabase
+      .from('diary_entries')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (data) setEntries(data);
   }
 
-  function addEntry() {
+  async function addEntry() {
     if (!text.trim()) return;
-    saveEntries([{ id: uid(), date: todayISO(), text: text.trim() }, ...entries]);
-    setText('');
+    const { data, error } = await supabase.from('diary_entries').insert([
+      { user_id: user.id, date: todayISO(), text: text.trim() }
+    ]).select();
+
+    if (!error && data) {
+      setEntries([data[0], ...entries]);
+      setText('');
+    }
   }
 
-  function deleteEntry(id) {
-    saveEntries(entries.filter((e) => e.id !== id));
-  }
-
-  function startEdit(entry) {
-    setEditing(entry.id);
-    setText(entry.text);
-  }
-
-  function saveEdit() {
-    if (!text.trim() || editing === null) return;
-    saveEntries(entries.map((e) => (e.id === editing ? { ...e, text: text.trim() } : e)));
-    setEditing(null);
-    setText('');
-  }
-
-  function cancelEdit() {
-    setEditing(null);
-    setText('');
+  async function deleteEntry(id) {
+    await supabase.from('diary_entries').delete().eq('id', id);
+    setEntries(entries.filter((e) => e.id !== id));
   }
 
   return (
@@ -402,6 +400,7 @@ function DiaryTab({ username }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={5}
+          placeholder="Log today's sights, wind adjustments, physical status..."
           style={{
             width: '100%',
             padding: 12,
@@ -414,14 +413,7 @@ function DiaryTab({ username }) {
           }}
         />
         <div style={{ marginTop: 12, display: 'flex', gap: 10 }}>
-          {editing !== null ? (
-            <>
-              <Button onClick={saveEdit}><Save size={16} /></Button>
-              <Button variant="ghost" onClick={cancelEdit}><X size={16} /></Button>
-            </>
-          ) : (
-            <Button onClick={addEntry}><Plus size={16} /></Button>
-          )}
+          <Button onClick={addEntry}><Plus size={16} /> Save Entry</Button>
         </div>
       </Card>
 
@@ -429,10 +421,7 @@ function DiaryTab({ username }) {
         <Card key={entry.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
             <strong style={{ color: COLORS.brass }}>{entry.date}</strong>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="ghost" onClick={() => startEdit(entry)}><Edit size={15} /></Button>
-              <Button variant="ghost" onClick={() => deleteEntry(entry.id)}><Trash2 size={15} /></Button>
-            </div>
+            <Button variant="ghost" onClick={() => deleteEntry(entry.id)}><Trash2 size={15} /></Button>
           </div>
           <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{entry.text}</p>
         </Card>
@@ -441,35 +430,46 @@ function DiaryTab({ username }) {
   );
 }
 
-function AnnouncementTab({ teamCode, teamName, username }) {
-  const STORAGE_KEY = `deadeye_announcements_${teamCode}`;
+// --- ANNOUNCEMENT TAB ---
+function AnnouncementTab({ profile, user }) {
   const [announcements, setAnnouncements] = useState([]);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    setAnnouncements(load(STORAGE_KEY, []));
-  }, [teamCode]);
+    fetchAnnouncements();
+  }, [profile?.team_code]);
 
-  function saveAnnouncements(list) {
-    setAnnouncements(list);
-    save(STORAGE_KEY, list);
+  async function fetchAnnouncements() {
+    const { data } = await supabase
+      .from('announcements')
+      .select('*')
+      .eq('team_code', profile?.team_code)
+      .order('created_at', { ascending: false });
+
+    if (data) setAnnouncements(data);
   }
 
-  function addAnnouncement() {
+  async function addAnnouncement() {
     if (!message.trim()) return;
-    saveAnnouncements([{ id: uid(), date: todayISO(), author: username, text: message.trim() }, ...announcements]);
-    setMessage('');
+    const { data, error } = await supabase.from('announcements').insert([
+      { team_code: profile?.team_code, author_email: user.email, text: message.trim(), date: todayISO() }
+    ]).select();
+
+    if (!error && data) {
+      setAnnouncements([data[0], ...announcements]);
+      setMessage('');
+    }
   }
 
   return (
     <div>
       <Card>
-        <h2 className="font-display" style={{ marginTop: 0 }}>Announcements</h2>
+        <h2 className="font-display" style={{ marginTop: 0 }}>Team Announcements</h2>
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           rows={4}
-          placeholder={`Send a message to ${teamName}`}
+          placeholder="Broadcast a message to your team..."
           style={{
             width: '100%',
             padding: 12,
@@ -482,7 +482,7 @@ function AnnouncementTab({ teamCode, teamName, username }) {
           }}
         />
         <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
-          <Button onClick={addAnnouncement}>Send</Button>
+          <Button onClick={addAnnouncement}>Send Broadcast</Button>
         </div>
       </Card>
 
@@ -490,7 +490,7 @@ function AnnouncementTab({ teamCode, teamName, username }) {
         <Card key={item.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
             <strong style={{ color: COLORS.brass }}>{item.date}</strong>
-            <span className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>@{item.author}</span>
+            <span className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>{item.author_email}</span>
           </div>
           <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{item.text}</p>
         </Card>
@@ -499,81 +499,77 @@ function AnnouncementTab({ teamCode, teamName, username }) {
   );
 }
 
-function ProgressTab({ username, user, users, team }) {
-  const STORAGE_KEY = `deadeye_progress_${username}`;
+// --- PROGRESS TAB ---
+function ProgressTab({ profile, user }) {
   const [entries, setEntries] = useState([]);
   const [discipline, setDiscipline] = useState(DISCIPLINES[0]);
   const [score, setScore] = useState('');
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
-    setEntries(load(STORAGE_KEY, []));
-  }, [username]);
+    fetchSessions();
+  }, [user?.id]);
 
-  function saveSessions(list) {
-    setEntries(list);
-    save(STORAGE_KEY, list);
+  async function fetchSessions() {
+    const { data } = await supabase
+      .from('progress_logs')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (data) setEntries(data);
   }
 
-  function addSession() {
+  async function addSession() {
     const value = Number(score);
     if (Number.isNaN(value) || score === '') return;
-    saveSessions([{ id: uid(), date: todayISO(), discipline, score: value, notes: notes.trim() }, ...entries]);
-    setScore('');
-    setNotes('');
+
+    const { data, error } = await supabase.from('progress_logs').insert([
+      {
+        user_id: user.id,
+        team_code: profile?.team_code,
+        discipline,
+        score: value,
+        notes: notes.trim(),
+        date: todayISO(),
+      }
+    ]).select();
+
+    if (!error && data) {
+      setEntries([data[0], ...entries]);
+      setScore('');
+      setNotes('');
+    }
   }
 
-  function deleteSession(id) {
-    saveSessions(entries.filter((e) => e.id !== id));
+  async function deleteSession(id) {
+    await supabase.from('progress_logs').delete().eq('id', id);
+    setEntries(entries.filter((e) => e.id !== id));
   }
-
-  const isCoach = user.role === 'coach';
-
-  const visibleEntries = isCoach
-    ? team.members.flatMap((memberUsername) => {
-        if (memberUsername === username) return [];
-        const member = users[memberUsername];
-        if (!member || member.role !== 'shooter') return [];
-        const memberEntries = load(`deadeye_progress_${memberUsername}`, []);
-        return memberEntries.map((entry) => ({ ...entry, owner: member.displayName, ownerUsername: memberUsername }));
-      })
-    : entries;
 
   return (
     <div>
-      {!isCoach && (
-        <Card>
-          <h2 className="font-display" style={{ marginTop: 0 }}>Progress</h2>
-          <Input label="Score" value={score} type="number" onChange={(e) => setScore(e.target.value)} />
-          <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button onClick={addSession}>Add Session</Button>
-          </div>
-        </Card>
-      )}
+      <Card>
+        <h2 className="font-display" style={{ marginTop: 0 }}>Target Score Entry</h2>
+        <Input label="Score" value={score} type="number" onChange={(e) => setScore(e.target.value)} />
+        <Input label="Notes / Conditions" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button onClick={addSession}>Add Target Score</Button>
+        </div>
+      </Card>
 
-      {isCoach && <Card><h2 className="font-display" style={{ marginTop: 0 }}>Team Shooter Progress</h2></Card>}
-
-      {visibleEntries.map((item) => (
-        <Card key={item.id + (item.ownerUsername || username)}>
+      {entries.map((item) => (
+        <Card key={item.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
-              <div className="font-display">{item.owner ? `${item.owner} • ${item.discipline}` : item.discipline}</div>
+              <div className="font-display">{item.discipline}</div>
               <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>{item.date}</div>
               {item.notes && <p style={{ marginBottom: 0 }}>{item.notes}</p>}
             </div>
-            {!isCoach && (
-              <div style={{ textAlign: 'right' }}>
-                <div className="font-display" style={{ color: COLORS.brass, fontSize: 24 }}>{item.score}</div>
-                <Button variant="ghost" onClick={() => deleteSession(item.id)}>Delete</Button>
-              </div>
-            )}
-            {isCoach && (
-              <div style={{ textAlign: 'right' }}>
-                <div className="font-display" style={{ color: COLORS.brass, fontSize: 24 }}>{item.score}</div>
-                <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>{item.owner}</div>
-              </div>
-            )}
+            <div style={{ textAlign: 'right' }}>
+              <div className="font-display" style={{ color: COLORS.brass, fontSize: 24 }}>{item.score}</div>
+              <Button variant="ghost" onClick={() => deleteSession(item.id)}>Delete</Button>
+            </div>
           </div>
         </Card>
       ))}
@@ -581,14 +577,10 @@ function ProgressTab({ username, user, users, team }) {
   );
 }
 
-function CoachTab() {
-  return <Card><p style={{ color: COLORS.textMuted, margin: 0 }}>Coming soon.</p></Card>;
-}
-
-function Dashboard({ user, users, teams, onLogout }) {
+// --- DASHBOARD ---
+function Dashboard({ user, profile, onLogout }) {
   const [tab, setTab] = useState('team');
-  const team = teams[user.teamCode];
-  const isCoach = user.role === 'coach';
+  const isCoach = profile?.role === 'coach';
 
   return (
     <div style={{ minHeight: '100vh', background: COLORS.bg, color: COLORS.text }}>
@@ -599,7 +591,7 @@ function Dashboard({ user, users, teams, onLogout }) {
           <h2 className="font-display" style={{ margin: 0 }}>DEADEYE</h2>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span>{user.displayName}</span>
+          <span>{profile?.display_name || user.email}</span>
           <Button variant="ghost" onClick={onLogout}><LogOut size={16} /></Button>
         </div>
       </header>
@@ -629,15 +621,16 @@ function Dashboard({ user, users, teams, onLogout }) {
       </nav>
 
       <main style={{ padding: 20, maxWidth: 900, margin: 'auto' }}>
-        {tab === 'team' && <TeamTab team={team} users={users} teamCode={user.teamCode} />}
-        {tab === 'diary' && !isCoach && <DiaryTab username={user.username} />}
-        {tab === 'announce' && isCoach && <AnnouncementTab teamCode={user.teamCode} teamName={team?.name || 'Team'} username={user.username} />}
-        {tab === 'progress' && <ProgressTab username={user.username} user={user} users={users} team={team} />}
+        {tab === 'team' && <TeamTab profile={profile} />}
+        {tab === 'diary' && !isCoach && <DiaryTab user={user} />}
+        {tab === 'announce' && isCoach && <AnnouncementTab profile={profile} user={user} />}
+        {tab === 'progress' && <ProgressTab profile={profile} user={user} />}
       </main>
     </div>
   );
 }
 
+// --- ERROR BOUNDARY ---
 class ErrorBoundary extends Component {
   constructor(props) {
     super(props);
@@ -663,30 +656,46 @@ class ErrorBoundary extends Component {
   }
 }
 
+// --- MAIN APP INNER ---
 function AppInner() {
-  const [users, setUsers] = useState(null);
-  const [teams, setTeams] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    ensureDemoData();
-    const loadedUsers = load(STORAGE_KEYS.USERS, {});
-    const loadedTeams = load(STORAGE_KEYS.TEAMS, {});
-    const session = load(STORAGE_KEYS.SESSION, null);
+    if (!supabase) return;
 
-    setUsers(loadedUsers);
-    setTeams(loadedTeams);
-    if (session && loadedUsers[session.username]) setCurrentUser(session);
-    setLoading(false);
+    // Check auth session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) fetchProfile(session.user.id);
+      else setLoading(false);
+    });
+
+    // Auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) fetchProfile(session.user.id);
+      else {
+        setProfile(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  function handleLogout() {
-    remove(STORAGE_KEYS.SESSION);
-    setCurrentUser(null);
+  async function fetchProfile(userId) {
+    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (data) setProfile(data);
+    setLoading(false);
   }
 
-  if (loading || !users || !teams) {
+  async function handleLogout() {
+    await supabase.auth.signOut();
+  }
+
+  if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.bg }}>
         <Loader2 size={40} color={COLORS.brass} />
@@ -694,11 +703,11 @@ function AppInner() {
     );
   }
 
-  if (!currentUser) {
-    return <AuthScreen users={users} teams={teams} onAuthed={setCurrentUser} setUsers={setUsers} setTeams={setTeams} />;
+  if (!user) {
+    return <AuthScreen onAuthed={setUser} />;
   }
 
-  return <Dashboard user={currentUser} users={users} teams={teams} onLogout={handleLogout} />;
+  return <Dashboard user={user} profile={profile} onLogout={handleLogout} />;
 }
 
 export default function App() {

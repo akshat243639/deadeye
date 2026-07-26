@@ -20,7 +20,7 @@ const Users = ({ size = 20, color = 'currentColor' }) => (
 
 const BookOpen = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 1 4 4v14a3 3 0 0 1 3-3h7z"/>
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
   </svg>
 );
 
@@ -60,9 +60,9 @@ const Edit = ({ size = 20, color = 'currentColor' }) => (
   </svg>
 );
 
-const Image = ({ size = 20, color = 'currentColor' }) => (
+const Camera = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>
   </svg>
 );
 
@@ -174,7 +174,7 @@ function Reticle({ size = 100 }) {
   );
 }
 
-// --- AUTH SCREEN (WITH CATEGORY SELECTION) ---
+// --- AUTH SCREEN ---
 function AuthScreen({ onAuthed }) {
   const [mode, setMode] = useState('login');
   const [displayName, setDisplayName] = useState('');
@@ -288,7 +288,6 @@ function AuthScreen({ onAuthed }) {
                 <Button type="button" variant={role === 'coach' ? 'primary' : 'ghost'} onClick={() => setRole('coach')}>Coach</Button>
               </div>
 
-              {/* CATEGORY SELECTOR FOR SHOOTERS */}
               {role === 'shooter' && (
                 <div style={{ marginBottom: 12 }}>
                   <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>Shooting Category / Event</label>
@@ -542,13 +541,14 @@ function AnnouncementTab({ profile, user }) {
   );
 }
 
-// --- PROGRESS TAB (WITH TARGET PHOTO & CATEGORY DISPLAY) ---
+// --- PROGRESS TAB (WITH NATIVE FILE UPLOADER) ---
 function ProgressTab({ profile, user }) {
   const [entries, setEntries] = useState([]);
   const [discipline, setDiscipline] = useState(profile?.category || DISCIPLINES[0]);
   const [score, setScore] = useState('');
   const [notes, setNotes] = useState('');
-  const [photoUrl, setPhotoUrl] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
   const isCoach = profile?.role === 'coach';
 
@@ -558,7 +558,6 @@ function ProgressTab({ profile, user }) {
 
   async function fetchSessions() {
     if (isCoach) {
-      // Coaches see all progress reports from all shooters in their team
       const { data } = await supabase
         .from('progress_logs')
         .select('*')
@@ -567,7 +566,6 @@ function ProgressTab({ profile, user }) {
 
       if (data) setEntries(data);
     } else {
-      // Shooters see their own progress reports
       const { data } = await supabase
         .from('progress_logs')
         .select('*')
@@ -582,6 +580,25 @@ function ProgressTab({ profile, user }) {
     const value = Number(score);
     if (Number.isNaN(value) || score === '') return;
 
+    setUploading(true);
+    let uploadedPhotoUrl = null;
+
+    // Direct Image Upload to Supabase Storage Bucket
+    if (imageFile) {
+      const fileExt = imageFile.name.split('.').pop();
+      const fileName = `${user.id}_${Date.now()}.${fileExt}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('targets')
+        .upload(fileName, imageFile);
+
+      if (!uploadErr) {
+        const { data: publicUrlData } = supabase.storage
+          .from('targets')
+          .getPublicUrl(fileName);
+        uploadedPhotoUrl = publicUrlData.publicUrl;
+      }
+    }
+
     const { data, error } = await supabase.from('progress_logs').insert([
       {
         user_id: user.id,
@@ -589,7 +606,7 @@ function ProgressTab({ profile, user }) {
         discipline: discipline,
         score: value,
         notes: notes.trim(),
-        photo_url: photoUrl.trim() || null,
+        photo_url: uploadedPhotoUrl,
         date: todayISO(),
       }
     ]).select();
@@ -598,8 +615,9 @@ function ProgressTab({ profile, user }) {
       setEntries([data[0], ...entries]);
       setScore('');
       setNotes('');
-      setPhotoUrl('');
+      setImageFile(null);
     }
+    setUploading(false);
   }
 
   async function deleteSession(id) {
@@ -637,16 +655,31 @@ function ProgressTab({ profile, user }) {
           <Input label="Score" value={score} type="number" onChange={(e) => setScore(e.target.value)} />
           <Input label="Notes / Sight Adjustments" value={notes} onChange={(e) => setNotes(e.target.value)} />
           
-          {/* PHOTO URL FIELD BELOW NOTES */}
-          <Input 
-            label="Target Image URL (Paste link to photo)" 
-            value={photoUrl} 
-            placeholder="https://..." 
-            onChange={(e) => setPhotoUrl(e.target.value)} 
-          />
+          {/* NATIVE FILE SELECTOR / CAMERA BUTTON */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>
+              Target Sheet Photo (Upload / Take Picture)
+            </label>
+            <input 
+              type="file" 
+              accept="image/*" 
+              onChange={(e) => setImageFile(e.target.files[0])}
+              style={{
+                width: '100%',
+                padding: 10,
+                background: COLORS.surfaceAlt,
+                color: COLORS.text,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 4,
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button onClick={addSession}>Add Target Score</Button>
+            <Button onClick={addSession} disabled={uploading}>
+              {uploading ? <Loader2 size={16} /> : 'Add Target Score'}
+            </Button>
           </div>
         </Card>
       )}
@@ -666,7 +699,7 @@ function ProgressTab({ profile, user }) {
                 {item.discipline || profile?.category || 'Target Session'}
               </div>
               <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
-                Date: {item.date} {profile?.display_name && !isCoach ? `• ${profile.display_name}` : ''}
+                Date: {item.date}
               </div>
               {item.notes && <p style={{ margin: '8px 0 0 0', color: COLORS.text }}>{item.notes}</p>}
             </div>
@@ -683,13 +716,12 @@ function ProgressTab({ profile, user }) {
           {item.photo_url && (
             <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
               <p style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Image size={14} /> Target Sheet Photo:
+                <Camera size={14} /> Target Sheet Photo:
               </p>
               <img 
                 src={item.photo_url} 
                 alt="Target Sheet" 
-                style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: 6, border: `1px solid ${COLORS.border}` }}
-                onError={(e) => { e.target.style.display = 'none'; }}
+                style={{ maxWidth: '100%', maxHeight: '350px', borderRadius: 6, border: `1px solid ${COLORS.border}` }}
               />
             </div>
           )}

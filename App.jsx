@@ -20,7 +20,7 @@ const Users = ({ size = 20, color = 'currentColor' }) => (
 
 const BookOpen = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 1 4 4v14a3 3 0 0 1 3-3h7z"/>
   </svg>
 );
 
@@ -60,15 +60,9 @@ const Edit = ({ size = 20, color = 'currentColor' }) => (
   </svg>
 );
 
-const Save = ({ size = 20, color = 'currentColor' }) => (
+const Image = ({ size = 20, color = 'currentColor' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
-  </svg>
-);
-
-const X = ({ size = 20, color = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
   </svg>
 );
 
@@ -91,7 +85,16 @@ body { margin: 0; padding: 0; background: ${COLORS.bg}; color: ${COLORS.text}; f
 .font-mono { font-family: monospace; }
 `;
 
-export const DISCIPLINES = ['10m Air Rifle', '10m Air Pistol', '25m Sport Pistol', '50m Rifle 3 Positions', 'Trap', 'Skeet'];
+export const DISCIPLINES = [
+  '10m Air Rifle',
+  '10m Air Pistol',
+  '25m Sport Pistol',
+  '25m Rapid Fire Pistol',
+  '50m Rifle 3 Positions',
+  '50m Rifle Prone',
+  'Trap',
+  'Skeet'
+];
 
 export function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -171,13 +174,14 @@ function Reticle({ size = 100 }) {
   );
 }
 
-// --- AUTH SCREEN (SUPABASE AUTH INTEGRATED) ---
+// --- AUTH SCREEN (WITH CATEGORY SELECTION) ---
 function AuthScreen({ onAuthed }) {
   const [mode, setMode] = useState('login');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('shooter');
+  const [category, setCategory] = useState(DISCIPLINES[0]);
   const [teamMode, setTeamMode] = useState('join');
   const [teamName, setTeamName] = useState('');
   const [teamCode, setTeamCode] = useState('');
@@ -228,6 +232,7 @@ function AuthScreen({ onAuthed }) {
         data: {
           display_name: displayName,
           role: role,
+          category: role === 'shooter' ? category : null,
           team_code: finalTeamCode,
         }
       }
@@ -237,12 +242,12 @@ function AuthScreen({ onAuthed }) {
       setError(authError.message);
       setLoading(false);
     } else if (data?.user) {
-      // Upsert profile in Supabase table
       await supabase.from('profiles').upsert({
         id: data.user.id,
         email: email.trim(),
         display_name: displayName,
         role: role,
+        category: role === 'shooter' ? category : null,
         team_code: finalTeamCode,
       });
       alert('Account created successfully!');
@@ -283,6 +288,30 @@ function AuthScreen({ onAuthed }) {
                 <Button type="button" variant={role === 'coach' ? 'primary' : 'ghost'} onClick={() => setRole('coach')}>Coach</Button>
               </div>
 
+              {/* CATEGORY SELECTOR FOR SHOOTERS */}
+              {role === 'shooter' && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>Shooting Category / Event</label>
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: 10,
+                      background: COLORS.surfaceAlt,
+                      color: COLORS.text,
+                      border: `1px solid ${COLORS.border}`,
+                      borderRadius: 4,
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    {DISCIPLINES.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
                 <Button type="button" variant={teamMode === 'create' ? 'primary' : 'ghost'} onClick={() => setTeamMode('create')}>Create Team</Button>
                 <Button type="button" variant={teamMode === 'join' ? 'primary' : 'ghost'} onClick={() => setTeamMode('join')}>Join Team</Button>
@@ -304,39 +333,52 @@ function AuthScreen({ onAuthed }) {
   );
 }
 
-// --- TEAM TAB (SUPABASE CLOUD SYNCED) ---
+// --- TEAM TAB ---
 function TeamTab({ profile }) {
   const [members, setMembers] = useState([]);
+  const [teamName, setTeamName] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchMembers();
+    fetchTeamData();
   }, [profile?.team_code]);
 
-  async function fetchMembers() {
+  async function fetchTeamData() {
     if (!profile?.team_code) {
       setLoading(false);
       return;
     }
 
-    const { data, error } = await supabase
+    const { data: teamData } = await supabase
+      .from('teams')
+      .select('name')
+      .eq('code', profile.team_code)
+      .single();
+
+    if (teamData) setTeamName(teamData.name);
+
+    const { data: memberData, error } = await supabase
       .from('profiles')
-      .select('display_name, email, role')
+      .select('display_name, email, role, category')
       .eq('team_code', profile.team_code);
 
-    if (!error && data) {
-      setMembers(data);
+    if (!error && memberData) {
+      setMembers(memberData);
     }
     setLoading(false);
   }
 
-  if (loading) return <Card><p style={{ color: COLORS.textMuted }}>Loading team roster...</p></Card>;
+  if (loading) return <Card><p style={{ color: COLORS.textMuted }}>Loading team workspace...</p></Card>;
 
   return (
     <div>
       <Card>
-        <h2 className="font-display" style={{ marginTop: 0 }}>Team Workspace</h2>
-        <p style={{ color: COLORS.textMuted, marginTop: 0 }}>Team Code: <span style={{ color: COLORS.brass, fontWeight: 'bold' }}>{profile?.team_code || 'No Team'}</span></p>
+        <h2 className="font-display" style={{ marginTop: 0 }}>
+          {teamName || 'Team Workspace'}
+        </h2>
+        <p style={{ color: COLORS.textMuted, marginTop: 0 }}>
+          Team Code: <span style={{ color: COLORS.brass, fontWeight: 'bold' }}>{profile?.team_code || 'No Team'}</span>
+        </p>
       </Card>
 
       <Card>
@@ -345,7 +387,9 @@ function TeamTab({ profile }) {
           <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: 12, background: COLORS.surfaceAlt, borderRadius: 6, marginBottom: 8 }}>
             <div>
               <div><strong>{member.display_name || member.email}</strong></div>
-              <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>{member.email}</div>
+              <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>
+                {member.email} {member.category ? `• ${member.category}` : ''}
+              </div>
             </div>
             <span style={{ color: COLORS.brass, textTransform: 'capitalize' }}>{member.role || 'Member'}</span>
           </div>
@@ -359,7 +403,6 @@ function TeamTab({ profile }) {
 function DiaryTab({ user }) {
   const [entries, setEntries] = useState([]);
   const [text, setText] = useState('');
-  const [editing, setEditing] = useState(null);
 
   useEffect(() => {
     fetchEntries();
@@ -499,25 +542,40 @@ function AnnouncementTab({ profile, user }) {
   );
 }
 
-// --- PROGRESS TAB ---
+// --- PROGRESS TAB (WITH TARGET PHOTO & CATEGORY DISPLAY) ---
 function ProgressTab({ profile, user }) {
   const [entries, setEntries] = useState([]);
-  const [discipline, setDiscipline] = useState(DISCIPLINES[0]);
+  const [discipline, setDiscipline] = useState(profile?.category || DISCIPLINES[0]);
   const [score, setScore] = useState('');
   const [notes, setNotes] = useState('');
+  const [photoUrl, setPhotoUrl] = useState('');
+
+  const isCoach = profile?.role === 'coach';
 
   useEffect(() => {
     fetchSessions();
-  }, [user?.id]);
+  }, [user?.id, profile?.team_code]);
 
   async function fetchSessions() {
-    const { data } = await supabase
-      .from('progress_logs')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    if (isCoach) {
+      // Coaches see all progress reports from all shooters in their team
+      const { data } = await supabase
+        .from('progress_logs')
+        .select('*')
+        .eq('team_code', profile?.team_code)
+        .order('created_at', { ascending: false });
 
-    if (data) setEntries(data);
+      if (data) setEntries(data);
+    } else {
+      // Shooters see their own progress reports
+      const { data } = await supabase
+        .from('progress_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (data) setEntries(data);
+    }
   }
 
   async function addSession() {
@@ -528,9 +586,10 @@ function ProgressTab({ profile, user }) {
       {
         user_id: user.id,
         team_code: profile?.team_code,
-        discipline,
+        discipline: discipline,
         score: value,
         notes: notes.trim(),
+        photo_url: photoUrl.trim() || null,
         date: todayISO(),
       }
     ]).select();
@@ -539,6 +598,7 @@ function ProgressTab({ profile, user }) {
       setEntries([data[0], ...entries]);
       setScore('');
       setNotes('');
+      setPhotoUrl('');
     }
   }
 
@@ -549,28 +609,90 @@ function ProgressTab({ profile, user }) {
 
   return (
     <div>
-      <Card>
-        <h2 className="font-display" style={{ marginTop: 0 }}>Target Score Entry</h2>
-        <Input label="Score" value={score} type="number" onChange={(e) => setScore(e.target.value)} />
-        <Input label="Notes / Conditions" value={notes} onChange={(e) => setNotes(e.target.value)} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button onClick={addSession}>Add Target Score</Button>
-        </div>
-      </Card>
+      {!isCoach && (
+        <Card>
+          <h2 className="font-display" style={{ marginTop: 0 }}>Target Score Entry</h2>
+          
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>Discipline / Event</label>
+            <select
+              value={discipline}
+              onChange={(e) => setDiscipline(e.target.value)}
+              style={{
+                width: '100%',
+                padding: 10,
+                background: COLORS.surfaceAlt,
+                color: COLORS.text,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: 4,
+                boxSizing: 'border-box',
+              }}
+            >
+              {DISCIPLINES.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+
+          <Input label="Score" value={score} type="number" onChange={(e) => setScore(e.target.value)} />
+          <Input label="Notes / Sight Adjustments" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          
+          {/* PHOTO URL FIELD BELOW NOTES */}
+          <Input 
+            label="Target Image URL (Paste link to photo)" 
+            value={photoUrl} 
+            placeholder="https://..." 
+            onChange={(e) => setPhotoUrl(e.target.value)} 
+          />
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button onClick={addSession}>Add Target Score</Button>
+          </div>
+        </Card>
+      )}
+
+      {isCoach && (
+        <Card>
+          <h2 className="font-display" style={{ marginTop: 0 }}>Team Progress Feed</h2>
+          <p style={{ color: COLORS.textMuted, margin: 0, fontSize: 13 }}>Viewing live target sheets and scores from your entire team.</p>
+        </Card>
+      )}
 
       {entries.map((item) => (
         <Card key={item.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
-              <div className="font-display">{item.discipline}</div>
-              <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>{item.date}</div>
-              {item.notes && <p style={{ marginBottom: 0 }}>{item.notes}</p>}
+              <div className="font-display" style={{ fontSize: 18, color: COLORS.brass }}>
+                {item.discipline || profile?.category || 'Target Session'}
+              </div>
+              <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
+                Date: {item.date} {profile?.display_name && !isCoach ? `• ${profile.display_name}` : ''}
+              </div>
+              {item.notes && <p style={{ margin: '8px 0 0 0', color: COLORS.text }}>{item.notes}</p>}
             </div>
+
             <div style={{ textAlign: 'right' }}>
-              <div className="font-display" style={{ color: COLORS.brass, fontSize: 24 }}>{item.score}</div>
-              <Button variant="ghost" onClick={() => deleteSession(item.id)}>Delete</Button>
+              <div className="font-display" style={{ color: COLORS.brass, fontSize: 28 }}>{item.score}</div>
+              {!isCoach && (
+                <Button variant="ghost" onClick={() => deleteSession(item.id)}><Trash2 size={15} /></Button>
+              )}
             </div>
           </div>
+
+          {/* TARGET PHOTO DISPLAY */}
+          {item.photo_url && (
+            <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.border}`, paddingTop: 10 }}>
+              <p style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Image size={14} /> Target Sheet Photo:
+              </p>
+              <img 
+                src={item.photo_url} 
+                alt="Target Sheet" 
+                style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: 6, border: `1px solid ${COLORS.border}` }}
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+            </div>
+          )}
         </Card>
       ))}
     </div>
@@ -591,7 +713,12 @@ function Dashboard({ user, profile, onLogout }) {
           <h2 className="font-display" style={{ margin: 0 }}>DEADEYE</h2>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span>{profile?.display_name || user.email}</span>
+          <div>
+            <div style={{ fontWeight: 'bold' }}>{profile?.display_name || user.email}</div>
+            {profile?.category && (
+              <div className="font-mono" style={{ fontSize: 11, color: COLORS.textMuted, textAlign: 'right' }}>{profile.category}</div>
+            )}
+          </div>
           <Button variant="ghost" onClick={onLogout}><LogOut size={16} /></Button>
         </div>
       </header>
@@ -665,14 +792,12 @@ function AppInner() {
   useEffect(() => {
     if (!supabase) return;
 
-    // Check auth session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       if (session?.user) fetchProfile(session.user.id);
       else setLoading(false);
     });
 
-    // Auth state listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) fetchProfile(session.user.id);

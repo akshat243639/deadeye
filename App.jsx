@@ -84,6 +84,18 @@ const Mail = ({ size = 20, color = 'currentColor' }) => (
   </svg>
 );
 
+const Lock = ({ size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+  </svg>
+);
+
+const Eye = ({ size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+  </svg>
+);
+
 // --- THEME & CONSTANTS ---
 export const COLORS = {
   bg: '#1B1A17',
@@ -357,16 +369,17 @@ function AuthScreen({ onAuthed }) {
   );
 }
 
-// --- TEAM TAB ---
-function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTeamAdded }) {
+// --- TEAM TAB (WITH ROSTER INSPECT & PRIVATE MESSAGING) ---
+function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTeamAdded, user }) {
   const [members, setMembers] = useState([]);
   const [teamName, setTeamName] = useState('');
   const [loading, setLoading] = useState(true);
   const [newTeamCode, setNewTeamCode] = useState('');
   const [updating, setUpdating] = useState(false);
 
-  const [selectedShooter, setSelectedShooter] = useState(null);
-  const [shooterProgress, setShooterProgress] = useState([]);
+  const [selectedMember, setSelectedMember] = useState(null);
+  const [memberProgress, setMemberProgress] = useState([]);
+  const [privateMessages, setPrivateMessages] = useState([]);
   const [messageText, setMessageText] = useState('');
   const [sendingMsg, setSendingMsg] = useState(false);
 
@@ -403,36 +416,52 @@ function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTea
     setLoading(false);
   }
 
-  async function inspectShooter(member) {
-    if (!isCoach || member.role === 'coach') return;
-    setSelectedShooter(member);
+  // Tap any member to view their public progress logs & start private chat
+  async function inspectMember(member) {
+    if (member.id === user.id) return; // Ignore self click
+    setSelectedMember(member);
 
-    const { data } = await supabase
+    // Fetch public scores posted by this shooter
+    const { data: scores } = await supabase
       .from('progress_logs')
       .select('*')
       .eq('user_id', member.id)
+      .eq('visibility', 'public')
       .order('created_at', { ascending: false });
 
-    if (data) setShooterProgress(data);
+    if (scores) setMemberProgress(scores);
+
+    // Fetch private direct messages exchanged between current user and selected member
+    fetchPrivateChat(member.id);
   }
 
-  async function sendMessageToShooter() {
-    if (!messageText.trim() || !selectedShooter) return;
-    setSendingMsg(true);
+  async function fetchPrivateChat(recipientId) {
+    const { data } = await supabase
+      .from('diary_entries')
+      .select('*')
+      .or(`and(user_id.eq.${user.id},recipient_id.eq.${recipientId}),and(user_id.eq.${recipientId},recipient_id.eq.${user.id})`)
+      .order('created_at', { ascending: true });
 
-    const formattedNote = `💬 COACH DIRECT FEEDBACK:\n${messageText.trim()}`;
+    if (data) setPrivateMessages(data);
+  }
+
+  async function sendPrivateMessage() {
+    if (!messageText.trim() || !selectedMember) return;
+    setSendingMsg(true);
 
     const { error } = await supabase.from('diary_entries').insert([
       {
-        user_id: selectedShooter.id,
+        user_id: user.id,
+        recipient_id: selectedMember.id,
         date: todayISO(),
-        text: formattedNote,
+        text: messageText.trim(),
+        visibility: 'private'
       }
     ]);
 
     if (!error) {
-      alert(`Message sent to ${selectedShooter.display_name || selectedShooter.email}'s diary!`);
       setMessageText('');
+      fetchPrivateChat(selectedMember.id);
     } else {
       alert('Error sending message: ' + error.message);
     }
@@ -568,36 +597,35 @@ function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTea
         </div>
       </Card>
 
-      {/* ROSTER */}
+      {/* ROSTER TABLE */}
       {activeTeamCode && (
         <Card>
           <h3 className="font-display" style={{ marginTop: 0 }}>Roster ({members.length})</h3>
-          {isCoach && (
-            <p style={{ color: COLORS.textMuted, fontSize: 12, marginTop: -8, marginBottom: 12 }}>
-              💡 Tap on any shooter's name to view their recent progress and send a personal feedback message.
-            </p>
-          )}
+          <p style={{ color: COLORS.textMuted, fontSize: 12, marginTop: -8, marginBottom: 12 }}>
+            💡 Tap on any shooter's name to view their public progress posts and send them a private message.
+          </p>
 
           {members.map((member, idx) => (
             <div 
               key={idx} 
-              onClick={() => inspectShooter(member)}
+              onClick={() => inspectMember(member)}
               style={{ 
                 display: 'flex', 
                 justifyContent: 'space-between', 
+                alignItems: 'center',
                 padding: 12, 
                 background: COLORS.surfaceAlt, 
                 borderRadius: 6, 
                 marginBottom: 8,
-                cursor: isCoach && member.role !== 'coach' ? 'pointer' : 'default',
-                border: selectedShooter?.id === member.id ? `1px solid ${COLORS.brass}` : '1px solid transparent'
+                cursor: member.id !== user.id ? 'pointer' : 'default',
+                border: selectedMember?.id === member.id ? `1px solid ${COLORS.brass}` : '1px solid transparent'
               }}
             >
               <div>
                 <div>
                   <strong>{member.display_name || member.email}</strong>
-                  {isCoach && member.role !== 'coach' && (
-                    <span style={{ fontSize: 11, color: COLORS.brass, marginLeft: 8 }}>[Tap to Inspect]</span>
+                  {member.id !== user.id && (
+                    <span style={{ fontSize: 11, color: COLORS.brass, marginLeft: 8 }}>[Tap to Message / Inspect]</span>
                   )}
                 </div>
                 <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12 }}>
@@ -610,26 +638,54 @@ function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTea
         </Card>
       )}
 
-      {/* INSPECT SHOOTER MODAL / CARD */}
-      {selectedShooter && (
+      {/* INSPECT MEMBER CARD & PRIVATE DIRECT CHAT */}
+      {selectedMember && (
         <Card>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h3 className="font-display" style={{ margin: 0, color: COLORS.brass }}>
-              {selectedShooter.display_name || selectedShooter.email}'s Profile
+              {selectedMember.display_name || selectedMember.email}'s Profile
             </h3>
-            <Button variant="ghost" onClick={() => setSelectedShooter(null)}>Close</Button>
+            <Button variant="ghost" onClick={() => setSelectedMember(null)}>Close</Button>
           </div>
 
+          {/* PRIVATE MESSAGE CHAT WINDOW */}
           <div style={{ background: COLORS.surfaceAlt, padding: 12, borderRadius: 6, marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>
-              Send Personal Feedback / Message to {selectedShooter.display_name || 'Shooter'}
-            </label>
+            <strong style={{ color: COLORS.text, display: 'block', marginBottom: 8, fontSize: 13 }}>
+              🔒 Private Chat with {selectedMember.display_name || 'Shooter'}
+            </strong>
+
+            <div style={{ maxHeight: 150, overflowY: 'auto', marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {privateMessages.length === 0 ? (
+                <p style={{ color: COLORS.textMuted, fontSize: 12, margin: 0 }}>No private messages yet. Say hello!</p>
+              ) : (
+                privateMessages.map((msg) => {
+                  const isMe = msg.user_id === user.id;
+                  return (
+                    <div 
+                      key={msg.id} 
+                      style={{
+                        alignSelf: isMe ? 'flex-end' : 'flex-start',
+                        background: isMe ? COLORS.red : COLORS.bg,
+                        color: '#fff',
+                        padding: '6px 10px',
+                        borderRadius: 6,
+                        maxWidth: '80%',
+                        fontSize: 13
+                      }}
+                    >
+                      {msg.text}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
             <div style={{ display: 'flex', gap: 8 }}>
               <input 
                 type="text" 
                 value={messageText} 
                 onChange={(e) => setMessageText(e.target.value)} 
-                placeholder="Write feedback note..."
+                placeholder="Type a private message..."
                 style={{
                   flex: 1,
                   padding: 10,
@@ -639,17 +695,18 @@ function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTea
                   borderRadius: 4,
                 }}
               />
-              <Button onClick={sendMessageToShooter} disabled={sendingMsg}>
+              <Button onClick={sendPrivateMessage} disabled={sendingMsg}>
                 {sendingMsg ? <Loader2 size={16} /> : <Send size={16} />}
               </Button>
             </div>
           </div>
 
-          <h4 className="font-display" style={{ marginTop: 0, marginBottom: 10 }}>Recent Target Scores</h4>
-          {shooterProgress.length === 0 ? (
-            <p style={{ color: COLORS.textMuted, fontSize: 13 }}>No target scores submitted yet.</p>
+          {/* PUBLIC POSTS OF INSPECTED SHOOTER */}
+          <h4 className="font-display" style={{ marginTop: 0, marginBottom: 10 }}>Public Target Scores</h4>
+          {memberProgress.length === 0 ? (
+            <p style={{ color: COLORS.textMuted, fontSize: 13 }}>No public target scores posted by this shooter.</p>
           ) : (
-            shooterProgress.map((item) => (
+            memberProgress.map((item) => (
               <div key={item.id} style={{ padding: 10, background: COLORS.bg, borderRadius: 6, marginBottom: 8, border: `1px solid ${COLORS.border}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: COLORS.textMuted, fontSize: 12 }}>{item.date} • {item.discipline}</span>
@@ -741,10 +798,11 @@ function AICoachTab({ profile, user }) {
   );
 }
 
-// --- DIARY TAB ---
+// --- DIARY TAB (WITH PRIVATE / COACH TOGGLE) ---
 function DiaryTab({ user }) {
   const [entries, setEntries] = useState([]);
   const [text, setText] = useState('');
+  const [visibility, setVisibility] = useState('private'); // 'private' or 'coach'
 
   useEffect(() => {
     fetchEntries();
@@ -755,6 +813,7 @@ function DiaryTab({ user }) {
       .from('diary_entries')
       .select('*')
       .eq('user_id', user.id)
+      .is('recipient_id', null) // Only log personal/coach diary entries
       .order('created_at', { ascending: false });
 
     if (data) setEntries(data);
@@ -763,7 +822,12 @@ function DiaryTab({ user }) {
   async function addEntry() {
     if (!text.trim()) return;
     const { data, error } = await supabase.from('diary_entries').insert([
-      { user_id: user.id, date: todayISO(), text: text.trim() }
+      { 
+        user_id: user.id, 
+        date: todayISO(), 
+        text: text.trim(),
+        visibility: visibility 
+      }
     ]).select();
 
     if (!error && data) {
@@ -797,7 +861,27 @@ function DiaryTab({ user }) {
             boxSizing: 'border-box',
           }}
         />
-        <div style={{ marginTop: 12, display: 'flex', gap: 10 }}>
+        
+        {/* VISIBILITY TOGGLE (PRIVATE / COACH) */}
+        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Visibility:</span>
+            <Button 
+              type="button" 
+              variant={visibility === 'private' ? 'primary' : 'ghost'} 
+              onClick={() => setVisibility('private')}
+            >
+              <Lock size={14} /> Private
+            </Button>
+            <Button 
+              type="button" 
+              variant={visibility === 'coach' ? 'primary' : 'ghost'} 
+              onClick={() => setVisibility('coach')}
+            >
+              <Eye size={14} /> Coach Only
+            </Button>
+          </div>
+
           <Button onClick={addEntry}><Plus size={16} /> Save Entry</Button>
         </div>
       </Card>
@@ -806,7 +890,7 @@ function DiaryTab({ user }) {
         <Card key={entry.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
             <strong style={{ color: entry.text.startsWith('💬 COACH') ? COLORS.olive : COLORS.brass }}>
-              {entry.date} {entry.text.startsWith('💬 COACH') ? '• Coach Note' : ''}
+              {entry.date} {entry.visibility === 'coach' ? '• Shared with Coach' : '• Private'}
             </strong>
             <Button variant="ghost" onClick={() => deleteEntry(entry.id)}><Trash2 size={15} /></Button>
           </div>
@@ -954,12 +1038,13 @@ function AnnouncementTab({ profile, activeTeamCode, user }) {
   );
 }
 
-// --- PROGRESS TAB ---
+// --- PROGRESS TAB (WITH COACH / PUBLIC TEAM TOGGLE) ---
 function ProgressTab({ profile, activeTeamCode, user }) {
   const [entries, setEntries] = useState([]);
   const [discipline, setDiscipline] = useState(profile?.category || DISCIPLINES[0]);
   const [score, setScore] = useState('');
   const [notes, setNotes] = useState('');
+  const [visibility, setVisibility] = useState('public'); // 'public' or 'coach'
   const [imageFile, setImageFile] = useState(null);
   const [uploading, setUploading] = useState(false);
 
@@ -1018,6 +1103,7 @@ function ProgressTab({ profile, activeTeamCode, user }) {
         discipline: discipline,
         score: value,
         notes: notes.trim(),
+        visibility: visibility,
         photo_url: uploadedPhotoUrl,
         date: todayISO(),
       }
@@ -1067,6 +1153,27 @@ function ProgressTab({ profile, activeTeamCode, user }) {
           <Input label="Score" value={score} type="number" onChange={(e) => setScore(e.target.value)} />
           <Input label="Notes / Sight Adjustments" value={notes} onChange={(e) => setNotes(e.target.value)} />
           
+          {/* PROGRESS VISIBILITY TOGGLE (PUBLIC / COACH) */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>Post Visibility</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button 
+                type="button" 
+                variant={visibility === 'public' ? 'primary' : 'ghost'} 
+                onClick={() => setVisibility('public')}
+              >
+                <Eye size={14} /> Public Team Feed
+              </Button>
+              <Button 
+                type="button" 
+                variant={visibility === 'coach' ? 'primary' : 'ghost'} 
+                onClick={() => setVisibility('coach')}
+              >
+                <Lock size={14} /> Coach Only
+              </Button>
+            </div>
+          </div>
+
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', marginBottom: 6, color: COLORS.textMuted, fontSize: 12 }}>
               Target Sheet Photo (Upload / Take Picture)
@@ -1110,7 +1217,7 @@ function ProgressTab({ profile, activeTeamCode, user }) {
                 {item.discipline || profile?.category || 'Target Session'}
               </div>
               <div className="font-mono" style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
-                Date: {item.date}
+                Date: {item.date} {item.visibility === 'coach' ? '• Coach Only' : '• Public'}
               </div>
               {item.notes && <p style={{ margin: '8px 0 0 0', color: COLORS.text }}>{item.notes}</p>}
             </div>
@@ -1150,7 +1257,6 @@ function Dashboard({ user, profile, onLogout }) {
 
   const isCoach = profile?.role === 'coach';
 
-  // Function to invoke the test email function on Supabase Edge Functions
   async function handleSendTestEmail() {
     setSendingEmail(true);
     try {
@@ -1158,14 +1264,12 @@ function Dashboard({ user, profile, onLogout }) {
 
       if (error) {
         console.error('Error sending email:', error);
-        alert('Failed to send email. Check console logs for details.');
+        alert('Failed to send email.');
       } else {
-        console.log('Email response:', data);
         alert('Test email sent successfully via Resend!');
       }
     } catch (err) {
       console.error('Unexpected error:', err);
-      alert('Error triggering email.');
     }
     setSendingEmail(false);
   }
@@ -1205,7 +1309,6 @@ function Dashboard({ user, profile, onLogout }) {
       setActiveTeamCode(teamsList[0]);
     }
 
-    // Tag all coach team codes in OneSignal
     if (window.OneSignalDeferred) {
       window.OneSignalDeferred.push(async function(OneSignal) {
         await OneSignal.login(user.id);
@@ -1281,6 +1384,7 @@ function Dashboard({ user, profile, onLogout }) {
             coachTeams={coachTeams}
             onSelectTeam={(code) => setActiveTeamCode(code)}
             onTeamAdded={(code) => fetchCoachTeams()}
+            user={user}
           />
         )}
         {tab === 'announce' && <AnnouncementTab profile={profile} activeTeamCode={activeTeamCode} user={user} />}

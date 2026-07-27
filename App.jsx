@@ -105,7 +105,8 @@ export const DISCIPLINES = [
   '50m Rifle 3 Positions',
   '50m Rifle Prone',
   'Trap',
-  'Skeet'
+  'Skeet',
+  'desi katta'
 ];
 
 export function todayISO() {

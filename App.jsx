@@ -78,6 +78,12 @@ const Send = ({ size = 20, color = 'currentColor' }) => (
   </svg>
 );
 
+const Mail = ({ size = 20, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+  </svg>
+);
+
 // --- THEME & CONSTANTS ---
 export const COLORS = {
   bg: '#1B1A17',
@@ -105,8 +111,7 @@ export const DISCIPLINES = [
   '50m Rifle 3 Positions',
   '50m Rifle Prone',
   'Trap',
-  'Skeet',
-  'desi katta'
+  'Skeet'
 ];
 
 export function todayISO() {
@@ -352,7 +357,7 @@ function AuthScreen({ onAuthed }) {
   );
 }
 
-// --- TEAM TAB (WITH MULTI-TEAM SWITCHING & DIRECT MESSAGING) ---
+// --- TEAM TAB ---
 function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTeamAdded }) {
   const [members, setMembers] = useState([]);
   const [teamName, setTeamName] = useState('');
@@ -579,7 +584,7 @@ function TeamTab({ profile, activeTeamCode, coachTeams = [], onSelectTeam, onTea
               onClick={() => inspectShooter(member)}
               style={{ 
                 display: 'flex', 
-                justify: 'space-between', 
+                justifyContent: 'space-between', 
                 padding: 12, 
                 background: COLORS.surfaceAlt, 
                 borderRadius: 6, 
@@ -1141,8 +1146,29 @@ function Dashboard({ user, profile, onLogout }) {
   const [tab, setTab] = useState('team');
   const [coachTeams, setCoachTeams] = useState([]);
   const [activeTeamCode, setActiveTeamCode] = useState(profile?.team_code || '');
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   const isCoach = profile?.role === 'coach';
+
+  // Function to invoke the test email function on Supabase Edge Functions
+  async function handleSendTestEmail() {
+    setSendingEmail(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('quick-endpoint');
+
+      if (error) {
+        console.error('Error sending email:', error);
+        alert('Failed to send email. Check console logs for details.');
+      } else {
+        console.log('Email response:', data);
+        alert('Test email sent successfully via Resend!');
+      }
+    } catch (err) {
+      console.error('Unexpected error:', err);
+      alert('Error triggering email.');
+    }
+    setSendingEmail(false);
+  }
 
   useEffect(() => {
     if (isCoach) {
@@ -1207,6 +1233,10 @@ function Dashboard({ user, profile, onLogout }) {
               {profile?.role || 'Shooter'} {profile?.category ? `• ${profile.category}` : ''}
             </div>
           </div>
+
+          <Button variant="ghost" onClick={handleSendTestEmail} disabled={sendingEmail} ariaLabel="Send Test Email">
+            {sendingEmail ? <Loader2 size={16} /> : <Mail size={16} />}
+          </Button>
 
           <Button variant="ghost" onClick={onLogout} ariaLabel="Logout">
             <LogOut size={16} />

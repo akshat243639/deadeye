@@ -1,9 +1,5 @@
+import React, { useState, useEffect, Component } from 'react';
 import { GoogleGenAI } from '@google/genai';
-
-// Uses the VITE_GEMINI_API_KEY environment variable set on Vercel
-const ai = new GoogleGenAI({ 
-  apiKey: import.meta.env.VITE_GEMINI_API_KEY 
-});
 
 export function AICoachWidget({ sessionData }) {
   const [analysis, setAnalysis] = useState('');
@@ -14,6 +10,13 @@ export function AICoachWidget({ sessionData }) {
     setAnalysis('');
 
     try {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("Missing VITE_GEMINI_API_KEY in Vercel settings.");
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: `Target Score: ${sessionData?.score || '588.4'}, Offset: ${sessionData?.offset || '1.2mm bottom-right'}. Question: ${question}`,
@@ -22,32 +25,32 @@ export function AICoachWidget({ sessionData }) {
 Give quick feedback: 1) Observation, 2) Cause, 3) 1 Drill.`
         }
       });
+
       setAnalysis(response.text);
     } catch (err) {
-      setAnalysis("⚠️ Could not reach AI Coach. Verify VITE_GEMINI_API_KEY on Vercel.");
+      console.error(err);
+      setAnalysis(`⚠️ ${err.message || "Could not reach AI Coach."}`);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="p-4 bg-slate-900 text-white rounded-xl border border-slate-800">
-      <h3 className="font-bold mb-2">🤖 DeadEye AI Coach</h3>
+    <div style={{ padding: '16px', background: '#24211D', borderRadius: '8px', border: '1px solid #3A3732', marginTop: '16px' }}>
+      <h3 style={{ fontWeight: 'bold', marginBottom: '8px', color: '#F2EEE5' }}>🤖 DeadEye AI Coach</h3>
       <button 
         onClick={() => askCoach("Why am I pulling low-right?")}
         disabled={loading}
-        className="px-3 py-1 bg-slate-800 rounded-full text-xs hover:bg-slate-700"
+        style={{ padding: '6px 12px', background: '#C62828', color: '#fff', borderRadius: '20px', fontSize: '12px', border: 'none', cursor: 'pointer' }}
       >
         Why am I pulling low-right?
       </button>
-      <div className="mt-3 p-3 bg-slate-950 rounded text-sm min-h-[60px]">
-        {loading ? "Analyzing target..." : (analysis || "Tap above for advice.")}
+      <div style={{ marginTop: '12px', padding: '12px', background: '#1B1A17', borderRadius: '6px', fontSize: '14px', minHeight: '60px' }}>
+        {loading ? "Analyzing target data..." : (analysis || "Tap above for advice.")}
       </div>
     </div>
   );
 }
-import React, { useState, useEffect, Component } from 'react';
-
 // Initialize Supabase using Vercel Environment Variables and CDN script
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -1531,6 +1534,7 @@ function AppInner() {
 export default function App() {
   return (
     <ErrorBoundary>
+      <AICoachWidget />
       <AppInner />
     </ErrorBoundary>
   );

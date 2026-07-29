@@ -1,3 +1,51 @@
+import { GoogleGenAI } from '@google/genai';
+
+// Uses the VITE_GEMINI_API_KEY environment variable set on Vercel
+const ai = new GoogleGenAI({ 
+  apiKey: import.meta.env.VITE_GEMINI_API_KEY 
+});
+
+export function AICoachWidget({ sessionData }) {
+  const [analysis, setAnalysis] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function askCoach(question) {
+    setLoading(true);
+    setAnalysis('');
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `Target Score: ${sessionData?.score || '588.4'}, Offset: ${sessionData?.offset || '1.2mm bottom-right'}. Question: ${question}`,
+        config: {
+          systemInstruction: `You are an elite 10m Air Rifle Coach for DeadEye.
+Give quick feedback: 1) Observation, 2) Cause, 3) 1 Drill.`
+        }
+      });
+      setAnalysis(response.text);
+    } catch (err) {
+      setAnalysis("⚠️ Could not reach AI Coach. Verify VITE_GEMINI_API_KEY on Vercel.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="p-4 bg-slate-900 text-white rounded-xl border border-slate-800">
+      <h3 className="font-bold mb-2">🤖 DeadEye AI Coach</h3>
+      <button 
+        onClick={() => askCoach("Why am I pulling low-right?")}
+        disabled={loading}
+        className="px-3 py-1 bg-slate-800 rounded-full text-xs hover:bg-slate-700"
+      >
+        Why am I pulling low-right?
+      </button>
+      <div className="mt-3 p-3 bg-slate-950 rounded text-sm min-h-[60px]">
+        {loading ? "Analyzing target..." : (analysis || "Tap above for advice.")}
+      </div>
+    </div>
+  );
+}
 import React, { useState, useEffect, Component } from 'react';
 
 // Initialize Supabase using Vercel Environment Variables and CDN script

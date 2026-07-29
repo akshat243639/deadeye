@@ -18,13 +18,13 @@ export function AICoachWidget({ sessionData }) {
       const ai = new GoogleGenAI({ apiKey });
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `Target Score: ${sessionData?.score || '588.4'}, Offset: ${sessionData?.offset || '1.2mm bottom-right'}. Question: ${question}`,
-        config: {
-          systemInstruction: `You are an elite 10m Air Rifle Coach for DeadEye.
+  model: 'gemini-2.0-flash',
+  contents: `Target Score: ${sessionData?.score || '588.4'}, Offset: ${sessionData?.offset || '1.2mm bottom-right'}. Question: ${question}`,
+  config: {
+    systemInstruction: `You are an elite 10m Air Rifle Coach for DeadEye.
 Give quick feedback: 1) Observation, 2) Cause, 3) 1 Drill.`
-        }
-      });
+  }
+});
 
       setAnalysis(response.text);
     } catch (err) {
